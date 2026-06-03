@@ -1,0 +1,184 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum MeterStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum TokenStatus {
+  GENERATED
+  TRANSMITTED
+  APPLIED
+  FAILED
+}
+
+enum NotificationChannel {
+  SMS
+  EMAIL
+  PUSH
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum AuditActorType {
+  USER
+  SYSTEM
+}
+
+model User {
+  id             String         @id @default(cuid())
+  email          String         @unique
+  phone          String         @unique
+  passwordHash   String
+  firstName      String
+  lastName       String
+  role           Role           @default(CUSTOMER)
+  isVerified     Boolean        @default(false)
+  isActive       Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  meters         Meter[]
+  transactions   Transaction[]
+  refreshTokens  RefreshToken[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+
+  @@index([role])
+  @@index([isActive])
+}
+
+model RefreshToken {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  userId     String
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Meter {
+  id             String        @id @default(cuid())
+  meterNumber    String        @unique
+  userId         String
+  nickname       String?
+  address        String
+  status         MeterStatus   @default(ACTIVE)
+  balanceUnits   Float         @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions   Transaction[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Transaction {
+  id                 String             @id @default(cuid())
+  userId             String
+  meterId            String
+  amountCents        Int
+  units              Float
+  currency           String             @default("KES")
+  status             TransactionStatus  @default(PENDING)
+  paymentReference   String?            @unique
+  paymentMethod      String
+  failureReason      String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  user               User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  meter              Meter              @relation(fields: [meterId], references: [id], onDelete: Restrict)
+  token              Token?
+  notifications      Notification[]
+
+  @@index([userId])
+  @@index([meterId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Token {
+  id             String       @id @default(cuid())
+  transactionId  String       @unique
+  tokenValue     String       @unique
+  units          Float
+  status         TokenStatus  @default(GENERATED)
+  transmittedAt  DateTime?
+  appliedAt      DateTime?
+  failureReason  String?
+  createdAt      DateTime     @default(now())
+
+  transaction    Transaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+model Notification {
+  id             String                @id @default(cuid())
+  userId         String
+  transactionId  String?
+  channel        NotificationChannel
+  status         NotificationStatus    @default(PENDING)
+  subject        String?
+  message        String
+  sentAt         DateTime?
+  createdAt      DateTime              @default(now())
+
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction    Transaction?          @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([transactionId])
+  @@index([status])
+}
+
+model AuditLog {
+  id          String          @id @default(cuid())
+  actorType   AuditActorType
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  createdAt   DateTime        @default(now())
+
+  actorUser   User?           @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}

@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: stima-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: stima
+      POSTGRES_PASSWORD: stima_dev_password
+      POSTGRES_DB: stima
+    ports:
+      - "5434:5432"
+    volumes:
+      - stima_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stima -d stima"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  stima_postgres_data:
