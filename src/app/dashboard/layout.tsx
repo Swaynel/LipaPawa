@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   CirclePlus,
   LayoutDashboard,
@@ -12,7 +12,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-import { authHeaders } from '@/lib/client-auth'
+import { authHeaders, getAccessToken } from '@/lib/client-auth'
 
 interface SidebarUser {
   firstName: string
@@ -32,6 +32,27 @@ function isActivePath(pathname: string, href: string) {
   return href === '/dashboard' ? pathname === href : pathname.startsWith(href)
 }
 
+function isUnexpiredJwt(token: string | null) {
+  if (!token) return false
+
+  try {
+    const [, payload] = token.split('.')
+    if (!payload) return false
+    const normalizedPayload = payload
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+      .padEnd(Math.ceil(payload.length / 4) * 4, '=')
+
+    const decoded = JSON.parse(window.atob(normalizedPayload)) as {
+      exp?: number
+    }
+
+    return typeof decoded.exp === 'number' && decoded.exp * 1000 > Date.now()
+  } catch {
+    return false
+  }
+}
+
 export default function DashboardLayout({
   children,
   modal,
@@ -40,21 +61,83 @@ export default function DashboardLayout({
   modal: ReactNode
 }) {
   const pathname = usePathname()
+  const router = useRouter()
   const [user, setUser] = useState<SidebarUser | null>(null)
+  const [authState, setAuthState] = useState<'checking' | 'authenticated'>('checking')
 
   useEffect(() => {
     let active = true
 
+    async function fetchCurrentUser(headers = authHeaders()) {
+      const response = await fetch('/api/auth/me', {
+        headers,
+        credentials: 'same-origin',
+      })
+
+      if (!response.ok) return null
+
+      const data = await response.json()
+      return (data.user ?? null) as SidebarUser | null
+    }
+
+    async function redirectToLogin() {
+      window.localStorage.removeItem('accessToken')
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+      }).catch(() => {})
+
+      const next = `${window.location.pathname}${window.location.search}`
+      router.replace(`/auth/login?next=${encodeURIComponent(next)}`)
+    }
+
     async function loadUser() {
       try {
-        const response = await fetch('/api/auth/me', { headers: authHeaders() })
-        const data = await response.json()
+        const accessToken = getAccessToken()
+        const currentUser = isUnexpiredJwt(accessToken)
+          ? await fetchCurrentUser()
+          : null
 
-        if (active) {
-          setUser(data.user ?? null)
+        if (currentUser) {
+          if (active) {
+            setUser(currentUser)
+            setAuthState('authenticated')
+          }
+          return
         }
+
+        if (accessToken && !isUnexpiredJwt(accessToken)) {
+          window.localStorage.removeItem('accessToken')
+        }
+
+        const refreshResponse = await fetch('/api/auth/refresh', {
+          method: 'POST',
+          credentials: 'same-origin',
+        })
+
+        if (refreshResponse.ok) {
+          const tokens = await refreshResponse.json()
+
+          if (tokens.accessToken) {
+            window.localStorage.setItem('accessToken', tokens.accessToken)
+          }
+
+          const refreshedUser = await fetchCurrentUser(
+            tokens.accessToken ? { Authorization: `Bearer ${tokens.accessToken}` } : authHeaders(),
+          )
+
+          if (refreshedUser) {
+            if (active) {
+              setUser(refreshedUser)
+              setAuthState('authenticated')
+            }
+            return
+          }
+        }
+
+        if (active) await redirectToLogin()
       } catch {
-        if (active) setUser(null)
+        if (active) await redirectToLogin()
       }
     }
 
@@ -65,7 +148,16 @@ export default function DashboardLayout({
       active = false
       window.removeEventListener('profile:updated', loadUser)
     }
-  }, [])
+  }, [router])
+
+  const handleSignOut = async () => {
+    window.localStorage.removeItem('accessToken')
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin',
+    }).catch(() => {})
+    router.replace('/auth/login')
+  }
 
   const userName = user ? `${user.firstName} ${user.lastName}` : 'Loading profile'
   const initials = user
@@ -73,6 +165,20 @@ export default function DashboardLayout({
     : '--'
   const activeItem = navItems.find(item => isActivePath(pathname, item.href)) ?? navItems[0]
   const ActiveIcon = activeItem.Icon
+
+  if (authState === 'checking') {
+    return (
+      <div className="dashboard-auth-loading">
+        <div className="dashboard-logo-mark">
+          <Zap size={16} strokeWidth={2.4} />
+        </div>
+        <div>
+          <div className="dashboard-auth-loading-title">Checking session</div>
+          <div className="dashboard-auth-loading-copy">Redirecting if your session has expired.</div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="dashboard-shell">
@@ -118,10 +224,10 @@ export default function DashboardLayout({
               <div className="dashboard-user-email">{user?.email ?? 'Checking session...'}</div>
             </div>
           </Link>
-          <Link className="dashboard-signout-link" href="/auth/login">
+          <button className="dashboard-signout-link" onClick={handleSignOut} type="button">
             <LogOut size={14} strokeWidth={1.9} />
             <span>Sign out</span>
-          </Link>
+          </button>
         </div>
       </aside>
 
@@ -136,23 +242,6 @@ export default function DashboardLayout({
               <div className="navbar-title">{activeItem.label}</div>
             </div>
           </div>
-
-          <nav className="navbar-links" aria-label="Primary dashboard navigation">
-            {navItems.map(item => {
-              const active = isActivePath(pathname, item.href)
-              const ItemIcon = item.Icon
-              return (
-                <Link
-                  key={item.href}
-                  className={`navbar-link${active ? ' navbar-link-active' : ''}`}
-                  href={item.href}
-                >
-                  <ItemIcon size={15} strokeWidth={1.9} />
-                  <span>{item.label}</span>
-                </Link>
-              )
-            })}
-          </nav>
 
           <div className="navbar-actions">
             <Link className="navbar-user-chip" href="/dashboard/profile" aria-label="Open profile">
@@ -170,6 +259,24 @@ export default function DashboardLayout({
           {children}
         </div>
       </main>
+      <nav className="mobile-bottom-nav" aria-label="Mobile dashboard navigation">
+        {navItems.map(item => {
+          const active = isActivePath(pathname, item.href)
+          const ItemIcon = item.Icon
+          return (
+            <Link
+              key={item.href}
+              aria-label={item.label}
+              className={`mobile-bottom-nav-item${active ? ' mobile-bottom-nav-item-active' : ''}`}
+              href={item.href}
+              title={item.label}
+            >
+              <ItemIcon size={19} strokeWidth={2} />
+              <span>{item.label}</span>
+            </Link>
+          )
+        })}
+      </nav>
       {modal}
     </div>
   )

@@ -19,7 +19,8 @@ export default function LoginPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Login failed')
       localStorage.setItem('accessToken', data.accessToken)
-      router.push('/dashboard')
+      const next = new URLSearchParams(window.location.search).get('next')
+      router.push(next?.startsWith('/dashboard') ? next : '/dashboard')
     } catch (err) { setError(err instanceof Error ? err.message : 'Login failed') }
     finally { setLoading(false) }
   }

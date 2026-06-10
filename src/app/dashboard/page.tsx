@@ -167,21 +167,15 @@ export default function DashboardPage() {
             icon: <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>,
           },
         ].map(stat => (
-          <div key={stat.label} style={{
+          <div key={stat.label} className="dashboard-stat-card" style={{
             background: 'var(--bg-card)',
-            border: `1px solid ${stat.accent ? 'var(--accent-border)' : 'var(--border)'}`,
+            border: '1px solid var(--border)',
             borderRadius: 'var(--radius-md)',
             padding: '20px 22px',
-            boxShadow: stat.accent ? 'var(--shadow-accent)' : 'var(--shadow-sm)',
+            boxShadow: 'var(--shadow-sm)',
             position: 'relative',
             overflow: 'hidden',
           }}>
-            {stat.accent && (
-              <div style={{
-                position: 'absolute', top: 0, left: 0, right: 0, height: 2,
-                background: 'linear-gradient(90deg, var(--accent), var(--accent-soft))',
-              }} />
-            )}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{stat.label}</span>
               <div style={{ color: stat.accent ? 'var(--accent)' : 'var(--text-muted)' }}>{stat.icon}</div>
