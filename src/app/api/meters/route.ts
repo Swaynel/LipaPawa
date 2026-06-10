@@ -17,13 +17,27 @@ export async function GET(request: NextRequest) {
     const session = requireApiUser(request)
     const meters = await getDb().meter.findMany({
       where: {
-        userId: session.userId,
+        OR: [
+          { userId: session.userId },
+          { shares: { some: { userId: session.userId } } },
+        ],
         status: { not: 'INACTIVE' },
+      },
+      include: {
+        shares: {
+          where: { userId: session.userId },
+          select: { role: true },
+        },
       },
       orderBy: { createdAt: 'desc' },
     })
 
-    return Response.json({ meters: meters.map(serializeMeter) })
+    return Response.json({
+      meters: meters.map(meter => ({
+        ...serializeMeter(meter),
+        access: meter.userId === session.userId ? 'OWNER' : meter.shares[0]?.role ?? 'VIEWER',
+      })),
+    })
   } catch (error) {
     return jsonError(error)
   }

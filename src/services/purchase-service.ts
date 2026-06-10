@@ -33,7 +33,17 @@ export async function createSimulatedPurchase(input: {
     const meter = await tx.meter.findFirst({
       where: {
         id: input.meterId,
-        userId: input.userId,
+        OR: [
+          { userId: input.userId },
+          {
+            shares: {
+              some: {
+                userId: input.userId,
+                role: { in: ["PURCHASER", "MANAGER"] },
+              },
+            },
+          },
+        ],
       },
       include: {
         user: true,

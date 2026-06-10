@@ -1,9 +1,7 @@
 'use client'
-
-import { ReactNode, Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { authHeaders } from '@/lib/client-auth'
 
 type Step = 'select' | 'amount' | 'confirm' | 'processing' | 'success'
 
@@ -19,44 +17,12 @@ interface Transaction {
   id: string
   units: number
   amount: number
-  status: string
-  failureReason?: string | null
-  token?: { tokenValue: string; status: string } | null
+  token?: { tokenValue: string }
 }
 
-const RATE_PER_KWH = 20
+const RATE = 20 // KES per kWh
 
-function Label({ children }: { children: ReactNode }) {
-  return <div className="purchase-label">{children}</div>
-}
-
-function Card({ children, variant = '' }: { children: ReactNode; variant?: string }) {
-  return <div className={`purchase-card ${variant}`}>{children}</div>
-}
-
-function AutomationTimeline({ tokenStatus }: { tokenStatus?: string }) {
-  const steps = [
-    'Payment confirmed',
-    'Electricity token generated',
-    'Token sent to meter',
-    'Units applied automatically',
-  ]
-
-  return (
-    <div className="automation-panel">
-      <div className="automation-title">Automation completed</div>
-      <div className="automation-list">
-        {steps.map((item, index) => (
-          <div key={item} className="automation-step">
-            <span className="automation-marker">✓</span>
-            <span>{item}</span>
-            {index === 1 && tokenStatus && <span className="automation-meta">{tokenStatus}</span>}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
+const steps = ['Select Meter', 'Enter Amount', 'Confirm']
 
 function PurchaseContent() {
   const searchParams = useSearchParams()
@@ -69,36 +35,34 @@ function PurchaseContent() {
   const [transaction, setTransaction] = useState<Transaction | null>(null)
   const [error, setError] = useState('')
 
-  const units = amount ? (parseFloat(amount) / RATE_PER_KWH).toFixed(2) : '0.00'
+  const token = () => localStorage.getItem('accessToken')
+  const units = amount ? (parseFloat(amount) / RATE).toFixed(2) : '0.00'
+  const stepIndex = ['select', 'amount', 'confirm'].indexOf(step)
 
   useEffect(() => {
-    fetch('/api/meters', { headers: authHeaders() })
+    fetch('/api/meters', { headers: { Authorization: `Bearer ${token()}` } })
       .then(r => r.json())
       .then(d => {
         const ms = d.meters || []
         setMeters(ms)
-        const preselected = searchParams.get('meterId')
-        if (preselected) {
-          const m = ms.find((m: Meter) => m.id === preselected)
+        const pre = searchParams.get('meterId')
+        if (pre) {
+          const m = ms.find((m: Meter) => m.id === pre)
           if (m) { setSelectedMeter(m); setStep('amount') }
         }
       })
   }, [searchParams])
 
   const handlePurchase = async () => {
-    setStep('processing')
-    setError('')
+    setStep('processing'); setError('')
     try {
       const res = await fetch('/api/transactions', {
         method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify({ meterId: selectedMeter!.id, amount: parseFloat(amount), paymentMethod }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Purchase failed')
-      if (data.transaction?.status === 'FAILED') {
-        throw new Error(data.transaction.failureReason || 'Automatic loading failed')
-      }
       setTransaction(data.transaction)
       setStep('success')
     } catch (err) {
@@ -109,165 +73,304 @@ function PurchaseContent() {
 
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">Buy units</h1>
-        <p className="page-copy">Purchase electricity for your meter</p>
+      <div style={{ marginBottom: 32 }}>
+        <h1 style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.03em' }}>Buy Units</h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>Purchase electricity tokens for your meter</p>
       </div>
 
-      <div className="step-indicator">
-        {(['select', 'amount', 'confirm'] as Step[]).map((s, i) => {
-          const complete = ['select', 'amount', 'confirm', 'processing', 'success'].indexOf(step) > i
-          const active = step === s
-
-          return (
-            <div key={s} className="step-item">
-              <div className={`step-dot ${active ? 'step-dot-active' : ''} ${complete ? 'step-dot-complete' : ''}`}>{i + 1}</div>
-              <span className={`step-label ${active ? 'step-label-active' : ''}`}>
-                {s.charAt(0).toUpperCase() + s.slice(1)}
-              </span>
-              {i < 2 && <div className="step-line" />}
-            </div>
-          )
-        })}
-      </div>
-
-      {step === 'select' && (
-        <Card>
-          <Label>Select a meter</Label>
-          {meters.length === 0 ? (
-            <div className="muted-text">No meters registered. Add a meter first.</div>
-          ) : (
-            <div className="purchase-option-list">
-              {meters.map(m => (
-                <button
-                  type="button"
-                  key={m.id}
-                  onClick={() => { setSelectedMeter(m); setStep('amount') }}
-                  className={`purchase-meter-option ${selectedMeter?.id === m.id ? 'purchase-meter-option-selected' : ''}`}
-                >
-                  <span>
-                    <span className="row-title">{m.nickname || m.meterNumber}</span>
-                    <span className="mono-muted">{m.meterNumber}</span>
-                  </span>
-                  <span className="purchase-meter-balance">{m.balance.toFixed(1)} kWh</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </Card>
+      {/* Stepper */}
+      {!['processing', 'success'].includes(step) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 36, maxWidth: 460 }}>
+          {steps.map((label, i) => {
+            const done = stepIndex > i
+            const active = stepIndex === i
+            return (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', flex: i < steps.length - 1 ? 1 : 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <div style={{
+                    width: 30, height: 30, borderRadius: '50%',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 12, fontWeight: 700,
+                    background: done ? 'var(--accent)' : active ? 'linear-gradient(135deg, var(--accent), var(--accent-soft))' : 'var(--bg-elevated)',
+                    color: done || active ? '#080C14' : 'var(--text-muted)',
+                    border: `2px solid ${done || active ? 'var(--accent)' : 'var(--border)'}`,
+                    boxShadow: active ? 'var(--shadow-accent)' : 'none',
+                    transition: 'all 0.2s',
+                  }}>
+                    {done ? <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg> : i + 1}
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: active ? 600 : 400, color: active ? 'var(--text-primary)' : done ? 'var(--accent)' : 'var(--text-muted)' }}>{label}</span>
+                </div>
+                {i < steps.length - 1 && (
+                  <div style={{ flex: 1, height: 2, margin: '0 10px', background: done ? 'var(--accent)' : 'var(--border)', borderRadius: 99, transition: 'background 0.3s' }} />
+                )}
+              </div>
+            )
+          })}
+        </div>
       )}
 
-      {step === 'amount' && selectedMeter && (
-        <Card>
-          <Label>Enter amount</Label>
-          <div className="purchase-meter-summary">
-            <span className="summary-label">Meter</span>
-            <span className="summary-value">{selectedMeter.nickname || selectedMeter.meterNumber}</span>
-          </div>
+      {/* Split layout for active steps */}
+      {['select', 'amount', 'confirm'].includes(step) && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 20, alignItems: 'start', maxWidth: 860 }}>
 
-          <div className="field-block">
-            <label className="field-label">Amount (KES)</label>
-            <input
-              type="number"
-              placeholder="e.g. 500"
-              value={amount}
-              min="50"
-              onChange={e => setAmount(e.target.value)}
-            />
-            {amount && (
-              <div className="field-helper">
-                ≈ {units} kWh at KES {RATE_PER_KWH}/kWh
+          {/* Left: form */}
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '28px', boxShadow: 'var(--shadow-sm)' }}>
+
+            {/* Step: Select */}
+            {step === 'select' && (
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16 }}>Choose a meter</div>
+                {meters.length === 0 ? (
+                  <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No meters. <Link href="/dashboard/meters" style={{ color: 'var(--accent)' }}>Add one first →</Link></div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {meters.map(m => (
+                      <div key={m.id} onClick={() => { setSelectedMeter(m); setStep('amount') }} style={{
+                        padding: '14px 16px', border: `1px solid ${selectedMeter?.id === m.id ? 'var(--accent-border)' : 'var(--border)'}`,
+                        borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                        background: selectedMeter?.id === m.id ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        transition: 'all 0.15s',
+                      }}>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>{m.nickname || m.meterNumber}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{m.meterNumber}</div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{m.balance.toFixed(1)}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>kWh left</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step: Amount */}
+            {step === 'amount' && selectedMeter && (
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16 }}>Purchase amount</div>
+
+                <div style={{ marginBottom: 18 }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Amount (KES)</label>
+                  <div style={{ position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: 'var(--text-muted)', fontWeight: 500 }}>KES</span>
+                    <input
+                      type="number" placeholder="0" min="50"
+                      value={amount} onChange={e => setAmount(e.target.value)}
+                      style={{ paddingLeft: 46, fontSize: 20, fontWeight: 700 }}
+                    />
+                  </div>
+                  {/* Quick amounts */}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                    {[100, 200, 500, 1000].map(a => (
+                      <button key={a} onClick={() => setAmount(String(a))} style={{
+                        padding: '5px 12px', borderRadius: 'var(--radius-sm)',
+                        background: amount === String(a) ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                        color: amount === String(a) ? 'var(--accent)' : 'var(--text-secondary)',
+                        border: `1px solid ${amount === String(a) ? 'var(--accent-border)' : 'var(--border)'}`,
+                        fontSize: 12, fontWeight: 500,
+                      }}>KES {a}</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 24 }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Payment method</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {[
+                      { value: 'MPESA', label: 'M-Pesa' },
+                      { value: 'CARD', label: 'Card' },
+                      { value: 'BANK', label: 'Bank' },
+                    ].map(pm => (
+                      <button key={pm.value} onClick={() => setPaymentMethod(pm.value)} style={{
+                        flex: 1, padding: '10px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: paymentMethod === pm.value ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                        color: paymentMethod === pm.value ? 'var(--accent)' : 'var(--text-secondary)',
+                        border: `1px solid ${paymentMethod === pm.value ? 'var(--accent-border)' : 'var(--border)'}`,
+                        fontSize: 12, fontWeight: 600,
+                      }}>{pm.label}</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button onClick={() => setStep('select')} style={{ flex: 1, padding: '11px', background: 'var(--bg-elevated)', color: 'var(--text-secondary)', borderRadius: 'var(--radius-sm)', fontSize: 13 }}>Back</button>
+                  <button onClick={() => setStep('confirm')} disabled={!amount || parseFloat(amount) < 50} style={{
+                    flex: 2, padding: '11px', background: 'linear-gradient(135deg, var(--accent), var(--accent-soft))',
+                    color: '#080C14', borderRadius: 'var(--radius-sm)', fontWeight: 700, fontSize: 13,
+                    opacity: !amount || parseFloat(amount) < 50 ? 0.4 : 1,
+                  }}>Continue →</button>
+                </div>
+              </div>
+            )}
+
+            {/* Step: Confirm */}
+            {step === 'confirm' && selectedMeter && (
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16 }}>Review & confirm</div>
+                {error && (
+                  <div style={{ background: 'var(--danger-dim)', border: '1px solid var(--danger-border)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: 12, color: 'var(--danger)', marginBottom: 16 }}>{error}</div>
+                )}
+                <div style={{ background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', overflow: 'hidden', marginBottom: 20 }}>
+                  {[
+                    ['Meter', selectedMeter.nickname || selectedMeter.meterNumber],
+                    ['Meter Number', selectedMeter.meterNumber],
+                    ['Amount', `KES ${parseFloat(amount).toLocaleString()}`],
+                    ['Units', `${units} kWh`],
+                    ['Rate', `KES ${RATE}/kWh`],
+                    ['Payment', paymentMethod],
+                  ].map(([label, value], i, arr) => (
+                    <div key={label} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '11px 16px',
+                      borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
+                      fontSize: 13,
+                    }}>
+                      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+                      <span style={{ fontWeight: 600 }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button onClick={() => setStep('amount')} style={{ flex: 1, padding: '11px', background: 'var(--bg-elevated)', color: 'var(--text-secondary)', borderRadius: 'var(--radius-sm)', fontSize: 13 }}>Back</button>
+                  <button onClick={handlePurchase} style={{
+                    flex: 2, padding: '11px',
+                    background: 'linear-gradient(135deg, var(--accent), var(--accent-soft))',
+                    color: '#080C14', borderRadius: 'var(--radius-sm)', fontWeight: 700, fontSize: 13,
+                    boxShadow: 'var(--shadow-accent)',
+                  }}>Confirm & Pay</button>
+                </div>
               </div>
             )}
           </div>
 
-          <div className="field-block-spaced">
-            <label className="field-label">Payment method</label>
-            <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
-              <option value="MPESA">M-Pesa</option>
-              <option value="CARD">Bank Card</option>
-              <option value="BANK">Bank Transfer</option>
-            </select>
-          </div>
+          {/* Right: Order summary */}
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '24px', boxShadow: 'var(--shadow-sm)', position: 'sticky', top: 24 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 18 }}>Order Summary</div>
 
-          <div className="button-row">
-            <button onClick={() => setStep('select')} className="button-secondary">Back</button>
-            <button
-              onClick={() => setStep('confirm')}
-              disabled={!amount || parseFloat(amount) < 50}
-              className="button-primary"
-            >Continue</button>
-          </div>
-        </Card>
-      )}
-
-      {step === 'confirm' && selectedMeter && (
-        <Card>
-          <Label>Confirm purchase</Label>
-          {error && <div className="form-error">{error}</div>}
-          {[
-            ['Meter', selectedMeter.nickname || selectedMeter.meterNumber],
-            ['Meter number', selectedMeter.meterNumber],
-            ['Amount', `KES ${parseFloat(amount).toLocaleString()}`],
-            ['Units', `${units} kWh`],
-            ['Payment', paymentMethod],
-          ].map(([label, value]) => (
-            <div key={label} className="purchase-summary-row">
-              <span className="summary-label">{label}</span>
-              <span className="summary-value">{value}</span>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Meter</div>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{selectedMeter?.nickname || selectedMeter?.meterNumber || '—'}</div>
+              {selectedMeter && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>{selectedMeter.meterNumber}</div>}
             </div>
-          ))}
 
-          <div className="button-row purchase-actions">
-            <button onClick={() => setStep('amount')} className="button-secondary">Back</button>
-            <button onClick={handlePurchase} className="button-primary">Pay and auto-load</button>
-          </div>
-        </Card>
-      )}
+            <div style={{ height: 1, background: 'var(--border)', marginBottom: 18 }} />
 
-      {step === 'processing' && (
-        <Card variant="processing-card">
-          <div className="processing-icon">⟳</div>
-          <div className="processing-title">Auto-loading your meter...</div>
-          <div className="processing-copy">Confirming payment, generating the token, and sending it to the meter</div>
-        </Card>
-      )}
-
-      {step === 'success' && transaction && selectedMeter && (
-        <Card variant="success-card">
-          <div className="success-icon">✓</div>
-          <div className="success-title">Units loaded automatically</div>
-          <div className="success-copy">
-            {transaction.units} kWh was applied to {selectedMeter.nickname || selectedMeter.meterNumber}.
-          </div>
-
-          <AutomationTimeline tokenStatus={transaction.token?.status} />
-
-          <div className="fallback-panel">
-            <div>
-              <div className="fallback-title">Fallback token saved</div>
-              <div className="fallback-copy">Only use it if the meter does not reflect the new units.</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Amount</span>
+                <span style={{ fontWeight: 600 }}>{amount ? `KES ${parseFloat(amount).toLocaleString()}` : '—'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Rate</span>
+                <span style={{ fontWeight: 600 }}>KES {RATE}/kWh</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Payment</span>
+                <span style={{ fontWeight: 600 }}>{paymentMethod || '—'}</span>
+              </div>
             </div>
-            {transaction.token && (
-              <Link href={`/dashboard/tokens/${transaction.id}`} className="button-info fallback-link">
-                View fallback
-              </Link>
+
+            <div style={{ height: 1, background: 'var(--border)', marginBottom: 18 }} />
+
+            {/* Units highlight */}
+            <div style={{
+              background: amount ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+              border: `1px solid ${amount ? 'var(--accent-border)' : 'var(--border)'}`,
+              borderRadius: 'var(--radius-sm)', padding: '16px', textAlign: 'center',
+              transition: 'all 0.2s',
+            }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>You will receive</div>
+              <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: '-0.03em', color: amount ? 'var(--accent)' : 'var(--text-muted)', lineHeight: 1 }}>{units}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>kWh</div>
+            </div>
+
+            {selectedMeter && amount && (
+              <div style={{ marginTop: 14, fontSize: 12, color: 'var(--text-secondary)', textAlign: 'center' }}>
+                New balance: <strong style={{ color: 'var(--accent)' }}>{(selectedMeter.balance + parseFloat(units)).toFixed(1)} kWh</strong>
+              </div>
             )}
           </div>
-
-          <div className="button-row button-row-spaced">
-            <button onClick={() => { setStep('select'); setAmount(''); setSelectedMeter(null) }} className="button-secondary">Buy again</button>
-            <button onClick={() => router.push('/dashboard')} className="button-primary">Back to dashboard</button>
-          </div>
-        </Card>
+        </div>
       )}
+
+      {/* Processing */}
+      {step === 'processing' && (
+        <div style={{
+          maxWidth: 400, margin: '0 auto', textAlign: 'center',
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-lg)', padding: '56px 32px',
+          boxShadow: 'var(--shadow-md)',
+        }}>
+          <div style={{
+            width: 56, height: 56, borderRadius: '50%', margin: '0 auto 20px',
+            background: 'var(--accent-dim)', border: '1px solid var(--accent-border)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg width="24" height="24" fill="none" stroke="var(--accent)" strokeWidth="2" viewBox="0 0 24 24" style={{ animation: 'spin 1s linear infinite' }}>
+              <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" opacity=".2"/><path d="M21 12a9 9 0 00-9-9"/>
+            </svg>
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 17, marginBottom: 8 }}>Processing Payment</div>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Generating token and applying to meter…</div>
+        </div>
+      )}
+
+      {/* Success */}
+      {step === 'success' && transaction && selectedMeter && (
+        <div style={{
+          maxWidth: 420, margin: '0 auto', textAlign: 'center',
+          background: 'var(--bg-card)', border: '1px solid var(--accent-border)',
+          borderRadius: 'var(--radius-lg)', padding: '44px 32px',
+          boxShadow: 'var(--shadow-accent)',
+        }}>
+          <div style={{
+            width: 60, height: 60, borderRadius: '50%', margin: '0 auto 22px',
+            background: 'var(--accent-dim)', border: '2px solid var(--accent)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg width="24" height="24" fill="none" stroke="var(--accent)" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+          </div>
+          <div style={{ fontWeight: 800, fontSize: 20, letterSpacing: '-0.02em', marginBottom: 6 }}>Purchase Successful</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 28 }}>
+            <strong style={{ color: 'var(--accent)' }}>{transaction.units} kWh</strong> applied to <strong>{selectedMeter.nickname || selectedMeter.meterNumber}</strong>
+          </div>
+
+          {transaction.token && (
+            <div style={{
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-sm)', padding: '18px', marginBottom: 24,
+            }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>Token (manual fallback)</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 20, fontWeight: 600, letterSpacing: '0.06em', color: 'var(--accent)' }}>
+                {transaction.token.tokenValue}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+            <button onClick={() => { setStep('select'); setAmount(''); setSelectedMeter(null) }} style={{
+              padding: '10px 20px', background: 'var(--bg-elevated)', color: 'var(--text-secondary)', borderRadius: 'var(--radius-sm)', fontSize: 13,
+            }}>Buy Again</button>
+            <button onClick={() => router.push('/dashboard')} style={{
+              padding: '10px 20px', background: 'linear-gradient(135deg, var(--accent), var(--accent-soft))', color: '#080C14', borderRadius: 'var(--radius-sm)', fontWeight: 700, fontSize: 13,
+            }}>Done</button>
+          </div>
+        </div>
+      )}
+
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }
 
 export default function PurchasePage() {
   return (
-    <Suspense fallback={<div className="loading-text">Loading purchase flow...</div>}>
+    <Suspense fallback={<div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading purchase flow...</div>}>
       <PurchaseContent />
     </Suspense>
   )

@@ -5,6 +5,14 @@ type MeterRecord = {
   address: string
   balanceUnits: number
   status: string
+  lowBalanceAlertEnabled?: boolean
+  lowBalanceThreshold?: number
+  lastLowBalanceAlertAt?: Date | null
+  autoTopUpEnabled?: boolean
+  autoTopUpThreshold?: number
+  autoTopUpAmountCents?: number | null
+  autoTopUpPaymentMethod?: string
+  lastAutoTopUpAt?: Date | null
   createdAt?: Date
   updatedAt?: Date
 }
@@ -48,6 +56,19 @@ export function serializeMeter(meter: MeterRecord) {
     address: meter.address,
     balance: meter.balanceUnits,
     status: meter.status,
+    automation: {
+      lowBalanceAlertEnabled: meter.lowBalanceAlertEnabled ?? false,
+      lowBalanceThreshold: meter.lowBalanceThreshold ?? 5,
+      lastLowBalanceAlertAt: meter.lastLowBalanceAlertAt?.toISOString() ?? null,
+      autoTopUpEnabled: meter.autoTopUpEnabled ?? false,
+      autoTopUpThreshold: meter.autoTopUpThreshold ?? 5,
+      autoTopUpAmount:
+        typeof meter.autoTopUpAmountCents === 'number'
+          ? meter.autoTopUpAmountCents / 100
+          : null,
+      autoTopUpPaymentMethod: meter.autoTopUpPaymentMethod ?? 'MPESA',
+      lastAutoTopUpAt: meter.lastAutoTopUpAt?.toISOString() ?? null,
+    },
     createdAt: meter.createdAt?.toISOString(),
     updatedAt: meter.updatedAt?.toISOString(),
   }
