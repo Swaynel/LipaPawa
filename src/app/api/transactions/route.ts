@@ -2,14 +2,18 @@ import { NextRequest } from 'next/server'
 import { z } from 'zod'
 
 import { jsonError, requireApiUser } from '@/lib/api-auth'
+import { CHECKOUT_PAYMENT_METHODS, PAYSTACK_PAYMENT_METHOD } from '@/lib/payment-methods'
 import { serializeTransaction } from '@/lib/api-serializers'
 import { getDb } from '@/lib/db'
-import { createSimulatedPurchase } from '@/services/purchase-service'
+import {
+  createPaystackPurchase,
+  createSimulatedPurchase,
+} from '@/services/purchase-service'
 
 const createTransactionSchema = z.object({
   meterId: z.string().min(1),
   amount: z.coerce.number().min(10).max(100000),
-  paymentMethod: z.string().trim().min(2).max(40).default('MPESA'),
+  paymentMethod: z.enum(CHECKOUT_PAYMENT_METHODS).default('MPESA'),
 })
 
 export async function GET(request: NextRequest) {
@@ -37,6 +41,37 @@ export async function POST(request: NextRequest) {
   try {
     const session = requireApiUser(request)
     const input = createTransactionSchema.parse(await request.json())
+
+    if (input.paymentMethod === PAYSTACK_PAYMENT_METHOD) {
+      const appUrl = process.env.APP_URL ?? new URL(request.url).origin
+      const user = await getDb().user.findFirst({
+        where: {
+          id: session.userId,
+          isActive: true,
+        },
+        select: {
+          email: true,
+        },
+      })
+
+      if (!user) {
+        return Response.json({ error: 'Customer account is inactive' }, { status: 400 })
+      }
+
+      const { transaction, authorizationUrl } = await createPaystackPurchase({
+        userId: session.userId,
+        email: user.email,
+        meterId: input.meterId,
+        amountKes: input.amount,
+        callbackUrl: new URL('/api/paystack/callback', appUrl).toString(),
+      })
+
+      return Response.json(
+        { transaction: serializeTransaction(transaction), authorizationUrl },
+        { status: 201 },
+      )
+    }
+
     const transaction = await createSimulatedPurchase({
       userId: session.userId,
       meterId: input.meterId,

@@ -3,6 +3,8 @@ import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 
+import { PAYSTACK_PAYMENT_METHOD, type CheckoutPaymentMethod } from '@/lib/payment-methods'
+
 type Step = 'select' | 'amount' | 'confirm' | 'processing' | 'success'
 
 interface Meter {
@@ -24,6 +26,21 @@ const RATE = 20 // KES per kWh
 
 const steps = ['Select Meter', 'Enter Amount', 'Confirm']
 
+function formatPaymentMethod(method: string) {
+  switch (method) {
+    case 'MPESA':
+      return 'M-Pesa'
+    case 'CARD':
+      return 'Card'
+    case 'BANK':
+      return 'Bank'
+    case PAYSTACK_PAYMENT_METHOD:
+      return 'Paystack'
+    default:
+      return method
+  }
+}
+
 function PurchaseContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -31,13 +48,26 @@ function PurchaseContent() {
   const [meters, setMeters] = useState<Meter[]>([])
   const [selectedMeter, setSelectedMeter] = useState<Meter | null>(null)
   const [amount, setAmount] = useState('')
-  const [paymentMethod, setPaymentMethod] = useState('MPESA')
+  const [paymentMethod, setPaymentMethod] = useState<CheckoutPaymentMethod>('MPESA')
   const [transaction, setTransaction] = useState<Transaction | null>(null)
   const [error, setError] = useState('')
 
   const token = () => localStorage.getItem('accessToken')
   const units = amount ? (parseFloat(amount) / RATE).toFixed(2) : '0.00'
   const stepIndex = ['select', 'amount', 'confirm'].indexOf(step)
+  const paymentStatus = searchParams.get('payment')
+  const paymentNotice =
+    paymentStatus === 'cancelled'
+      ? 'Paystack checkout was cancelled before payment was completed.'
+      : paymentStatus === 'failed'
+        ? 'Paystack payment could not be confirmed. Please try again.'
+        : ''
+  const paymentOptions: Array<{ value: CheckoutPaymentMethod; label: string }> = [
+    { value: 'MPESA', label: 'M-Pesa' },
+    { value: 'PAYSTACK', label: 'Paystack' },
+    { value: 'CARD', label: 'Card' },
+    { value: 'BANK', label: 'Bank' },
+  ]
 
   useEffect(() => {
     fetch('/api/meters', { headers: { Authorization: `Bearer ${token()}` } })
@@ -63,6 +93,10 @@ function PurchaseContent() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Purchase failed')
+      if (data.authorizationUrl) {
+        window.location.assign(data.authorizationUrl)
+        return
+      }
       setTransaction(data.transaction)
       setStep('success')
     } catch (err) {
@@ -77,6 +111,20 @@ function PurchaseContent() {
         <h1 style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.03em' }}>Buy Units</h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>Purchase electricity tokens for your meter</p>
       </div>
+
+      {paymentNotice && (
+        <div style={{
+          background: paymentStatus === 'failed' ? 'var(--danger-dim)' : 'var(--warning-dim)',
+          border: `1px solid ${paymentStatus === 'failed' ? 'var(--danger-border)' : 'var(--warning-border)'}`,
+          color: paymentStatus === 'failed' ? 'var(--danger)' : 'var(--warning)',
+          borderRadius: 'var(--radius-sm)',
+          padding: '12px 14px',
+          fontSize: 13,
+          marginBottom: 18,
+        }}>
+          {paymentNotice}
+        </div>
+      )}
 
       {/* Stepper */}
       {!['processing', 'success'].includes(step) && (
@@ -120,7 +168,7 @@ function PurchaseContent() {
             {/* Step: Select */}
             {step === 'select' && (
               <div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16 }}>Choose a meter</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16 }}>Choose a meter</div>
                 {meters.length === 0 ? (
                   <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No meters. <Link href="/dashboard/meters" style={{ color: 'var(--accent)' }}>Add one first →</Link></div>
                 ) : (
@@ -180,11 +228,7 @@ function PurchaseContent() {
                 <div style={{ marginBottom: 24 }}>
                   <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Payment method</label>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    {[
-                      { value: 'MPESA', label: 'M-Pesa' },
-                      { value: 'CARD', label: 'Card' },
-                      { value: 'BANK', label: 'Bank' },
-                    ].map(pm => (
+                    {paymentOptions.map(pm => (
                       <button key={pm.value} onClick={() => setPaymentMethod(pm.value)} style={{
                         flex: 1, padding: '10px',
                         borderRadius: 'var(--radius-sm)',
@@ -222,7 +266,7 @@ function PurchaseContent() {
                     ['Amount', `KES ${parseFloat(amount).toLocaleString()}`],
                     ['Units', `${units} kWh`],
                     ['Rate', `KES ${RATE}/kWh`],
-                    ['Payment', paymentMethod],
+                    ['Payment', formatPaymentMethod(paymentMethod)],
                   ].map(([label, value], i, arr) => (
                     <div key={label} style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -242,7 +286,7 @@ function PurchaseContent() {
                     background: 'linear-gradient(135deg, var(--accent), var(--accent-soft))',
                     color: '#080C14', borderRadius: 'var(--radius-sm)', fontWeight: 700, fontSize: 13,
                     boxShadow: 'var(--shadow-accent)',
-                  }}>Confirm & Pay</button>
+                  }}>{paymentMethod === PAYSTACK_PAYMENT_METHOD ? 'Continue to Paystack →' : 'Confirm & Pay'}</button>
                 </div>
               </div>
             )}
@@ -260,20 +304,20 @@ function PurchaseContent() {
 
             <div style={{ height: 1, background: 'var(--border)', marginBottom: 18 }} />
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                <span style={{ color: 'var(--text-muted)' }}>Amount</span>
-                <span style={{ fontWeight: 600 }}>{amount ? `KES ${parseFloat(amount).toLocaleString()}` : '—'}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Amount</span>
+                  <span style={{ fontWeight: 600 }}>{amount ? `KES ${parseFloat(amount).toLocaleString()}` : '—'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Rate</span>
+                  <span style={{ fontWeight: 600 }}>KES {RATE}/kWh</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Payment</span>
+                  <span style={{ fontWeight: 600 }}>{formatPaymentMethod(paymentMethod) || '—'}</span>
+                </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                <span style={{ color: 'var(--text-muted)' }}>Rate</span>
-                <span style={{ fontWeight: 600 }}>KES {RATE}/kWh</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                <span style={{ color: 'var(--text-muted)' }}>Payment</span>
-                <span style={{ fontWeight: 600 }}>{paymentMethod || '—'}</span>
-              </div>
-            </div>
 
             <div style={{ height: 1, background: 'var(--border)', marginBottom: 18 }} />
 
