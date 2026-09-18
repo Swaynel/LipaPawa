@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { z } from 'zod'
 
 import { jsonError, requireApiUser } from '@/lib/api-auth'
+import { getAppUrl } from '@/lib/app-url'
 import { CHECKOUT_PAYMENT_METHODS, PAYSTACK_PAYMENT_METHOD } from '@/lib/payment-methods'
 import { serializeTransaction } from '@/lib/api-serializers'
 import { getDb } from '@/lib/db'
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
     const input = createTransactionSchema.parse(await request.json())
 
     if (input.paymentMethod === PAYSTACK_PAYMENT_METHOD) {
-      const appUrl = process.env.APP_URL ?? new URL(request.url).origin
+      const appUrl = getAppUrl(request)
       const user = await getDb().user.findFirst({
         where: {
           id: session.userId,

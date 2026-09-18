@@ -77,6 +77,7 @@ export async function verifyPaystackTransaction(reference: string) {
       headers: {
         Authorization: `Bearer ${getPaystackSecretKey()}`,
       },
+      cache: "no-store",
     },
   );
 

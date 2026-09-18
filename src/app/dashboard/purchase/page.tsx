@@ -56,9 +56,12 @@ function PurchaseContent() {
   const units = amount ? (parseFloat(amount) / RATE).toFixed(2) : '0.00'
   const stepIndex = ['select', 'amount', 'confirm'].indexOf(step)
   const paymentStatus = searchParams.get('payment')
+  const paymentReference = searchParams.get('reference')
   const paymentNotice =
     paymentStatus === 'cancelled'
       ? 'Paystack checkout was cancelled before payment was completed.'
+      : paymentStatus === 'pending'
+        ? 'Payment is still being confirmed. Your meter will update automatically once Paystack confirms it.'
       : paymentStatus === 'failed'
         ? 'Paystack payment could not be confirmed. Please try again.'
         : ''
@@ -82,6 +85,51 @@ function PurchaseContent() {
         }
       })
   }, [searchParams])
+
+  useEffect(() => {
+    if (paymentStatus !== 'pending' || !paymentReference) return
+
+    let active = true
+    let attempts = 0
+
+    const checkPaymentStatus = async () => {
+      attempts += 1
+
+      try {
+        const response = await fetch(
+          `/api/paystack/status?reference=${encodeURIComponent(paymentReference)}`,
+          { headers: { Authorization: `Bearer ${token()}` }, credentials: 'same-origin' },
+        )
+        const data = await response.json()
+        const refreshedTransaction = data.transaction
+
+        if (
+          active &&
+          response.ok &&
+          (refreshedTransaction?.status === 'COMPLETED' || refreshedTransaction?.token)
+        ) {
+          router.replace(`/dashboard/tokens/${refreshedTransaction.id}`)
+        }
+      } catch {
+        // The webhook can still complete the payment if a status check fails.
+      }
+    }
+
+    void checkPaymentStatus()
+    const interval = window.setInterval(() => {
+      if (attempts >= 15) {
+        window.clearInterval(interval)
+        return
+      }
+
+      void checkPaymentStatus()
+    }, 2000)
+
+    return () => {
+      active = false
+      window.clearInterval(interval)
+    }
+  }, [paymentReference, paymentStatus, router])
 
   const handlePurchase = async () => {
     setStep('processing'); setError('')

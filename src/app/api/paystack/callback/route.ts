@@ -1,9 +1,10 @@
 import { NextRequest } from 'next/server'
 
+import { getAppUrl } from '@/lib/app-url'
 import { finalizePaystackPurchase } from '@/services/purchase-service'
 
 export async function GET(request: NextRequest) {
-  const appUrl = process.env.APP_URL ?? new URL(request.url).origin
+  const appUrl = getAppUrl(request)
   const url = new URL(request.url)
   const reference = url.searchParams.get('reference') ?? url.searchParams.get('trxref')
 
@@ -24,11 +25,19 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    if (transaction.status === 'PENDING') {
+      return Response.redirect(
+        new URL(`/dashboard/purchase?payment=pending&reference=${encodeURIComponent(reference)}`, appUrl).toString(),
+        303,
+      )
+    }
+
     return Response.redirect(
       new URL('/dashboard/purchase?payment=failed', appUrl).toString(),
       303,
     )
-  } catch {
+  } catch (error) {
+    console.error('Paystack callback finalization failed', error)
     return Response.redirect(
       new URL('/dashboard/purchase?payment=failed', appUrl).toString(),
       303,

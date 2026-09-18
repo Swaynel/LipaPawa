@@ -386,6 +386,14 @@ export async function finalizePaystackPurchase(reference: string) {
   const verification = await verifyPaystackTransaction(reference)
 
   if (verification.status !== 'success') {
+    const isStillProcessing = ['pending', 'ongoing', 'processing'].includes(
+      verification.status,
+    )
+
+    if (isStillProcessing) {
+      return loadPurchaseTransaction(db, existing.id)
+    }
+
     return db.$transaction(async tx => {
       await tx.transaction.update({
         where: { id: existing.id },
